@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { MOCK_STOCKS, generateCandles, generateMockNews } from '@/lib/api/mockData';
 import { getQuote, getCompanyProfile, getCompanyNews, getEarningsCalendar, getBasicFinancials, getRecommendations } from '@/lib/api/finnhub';
 import { StockDetail } from '@/types';
+import { calcTechnicalScore, calcFundamentalScore, calcFinalAIScore, calcBuyProbability, getTrend } from '@/lib/scoring/aiScore';
 
 export async function GET(
   _request: Request,
@@ -11,10 +12,9 @@ export async function GET(
   const symbol = ticker.toUpperCase();
 
   const mockBase = MOCK_STOCKS.find((s) => s.ticker === symbol);
-  const candles = generateCandles(mockBase?.price || 100);
   const mockNews = generateMockNews(symbol);
 
-  const mockSmartMoney = {
+  const buildSmartMoney = (price: number) => ({
     darkPoolActivity: 'Bullish' as const,
     darkPoolVolume: Math.floor(Math.random() * 5000000 + 1000000),
     optionsFlow: 'Aggressive CALL buying' as const,
@@ -23,55 +23,45 @@ export async function GET(
     institutionalBuying: 'Increasing' as const,
     hedgeFundSentiment: 'Bullish' as const,
     insiderTransactions: [
-      { date: '2024-11-15', name: 'John Smith', title: 'CEO', type: 'Buy' as const, shares: 10000, price: mockBase?.price || 100, value: 10000 * (mockBase?.price || 100) },
-      { date: '2024-10-22', name: 'Jane Doe', title: 'CFO', type: 'Buy' as const, shares: 5000, price: (mockBase?.price || 100) * 0.95, value: 5000 * (mockBase?.price || 100) * 0.95 },
+      { date: '2024-11-15', name: 'John Smith', title: 'CEO', type: 'Buy' as const, shares: 10000, price, value: 10000 * price },
+      { date: '2024-10-22', name: 'Jane Doe', title: 'CFO', type: 'Buy' as const, shares: 5000, price: price * 0.95, value: 5000 * price * 0.95 },
     ],
     blockTrades: Math.floor(Math.random() * 10 + 1),
     whaleActivity: Math.random() > 0.4,
-  };
+  });
 
+  // No API key — return mock/default data
   if (!process.env.FINNHUB_API_KEY) {
-    const baseStock = mockBase || {
-      ticker: symbol, company: symbol, price: 100, change: 0, changePercent: 0,
-      volume: 1000000, avgVolume: 1000000, relativeVolume: 1, marketCap: 1000000000,
-      sector: 'Technology', industry: 'Technology', aiScore: 65, technicalScore: 65,
-      fundamentalScore: 65, sentimentScore: 65, momentumScore: 65, optionsFlowScore: 65,
-      institutionalScore: 65, buyProbability: 65, pattern: 'Consolidation', trend: 'Neutral' as const,
-      rsi: 50, macd: 0, ema9: 100, ema21: 100, ema50: 100, ema200: 100, vwap: 100, atr: 3,
-      shortFloat: 2, beta: 1, high52w: 120, low52w: 80, pe: 25, eps: 4, revenueGrowth: 10,
-      epsGrowth: 15, institutionalOwnership: 60, insiderBuying: 'Neutral' as const,
-      analystRating: 'Hold', priceTarget: 110,
-    };
-
+    const p = mockBase?.price || 100;
+    const base = mockBase || buildDefaultStock(symbol, p);
     const detail: StockDetail = {
-      ...baseStock,
-      description: `${symbol} is a leading company in its industry.`,
-      website: `https://www.${symbol.toLowerCase()}.com`,
-      ceo: 'Executive Officer',
-      employees: 50000,
-      grossMargin: 45,
-      operatingMargin: 20,
-      netMargin: 15,
-      roe: 25,
+      ...base,
+      description: `${symbol} is a publicly traded company.`,
+      website: '',
+      ceo: '',
+      employees: 0,
+      grossMargin: 40,
+      operatingMargin: 15,
+      netMargin: 10,
+      roe: 20,
       debtToEquity: 0.5,
-      freeCashFlow: 5000000000,
-      forwardPE: (mockBase?.pe || 25) * 0.85,
+      freeCashFlow: 0,
+      forwardPE: (base.pe || 20) * 0.85,
       pegRatio: 1.5,
-      dividendYield: 0.5,
+      dividendYield: 0,
       earningsHistory: [
-        { date: 'Q3 2024', actual: 2.10, estimate: 1.95, surprise: 0.15, surprisePercent: 7.7 },
-        { date: 'Q2 2024', actual: 1.85, estimate: 1.78, surprise: 0.07, surprisePercent: 3.9 },
-        { date: 'Q1 2024', actual: 1.62, estimate: 1.58, surprise: 0.04, surprisePercent: 2.5 },
-        { date: 'Q4 2023', actual: 1.45, estimate: 1.50, surprise: -0.05, surprisePercent: -3.3 },
+        { date: 'Q3 2024', actual: 0.42, estimate: 0.38, surprise: 0.04, surprisePercent: 10.5 },
+        { date: 'Q2 2024', actual: 0.35, estimate: 0.33, surprise: 0.02, surprisePercent: 6.1 },
+        { date: 'Q1 2024', actual: 0.28, estimate: 0.30, surprise: -0.02, surprisePercent: -6.7 },
+        { date: 'Q4 2023', actual: 0.20, estimate: 0.22, surprise: -0.02, surprisePercent: -9.1 },
       ],
       news: mockNews,
-      smartMoney: mockSmartMoney,
-      aiExplanation: `${symbol} is showing a compelling combination of technical strength and fundamental momentum. The stock has been experiencing increased institutional accumulation while technical indicators remain in favorable territory. The EMA structure is aligned bullishly, with relative volume confirming participation. Options flow shows elevated call buying, suggesting smart money is positioning for upside.`,
-      supportLevels: [(mockBase?.price || 100) * 0.95, (mockBase?.price || 100) * 0.90],
-      resistanceLevels: [(mockBase?.price || 100) * 1.05, (mockBase?.price || 100) * 1.10],
-      candles,
+      smartMoney: buildSmartMoney(p),
+      aiExplanation: `${symbol} is being tracked by the AI scanner. Connect your Finnhub API key for real-time analysis.`,
+      supportLevels: [p * 0.95, p * 0.90],
+      resistanceLevels: [p * 1.05, p * 1.10],
+      candles: generateCandles(p),
     };
-
     return NextResponse.json(detail);
   }
 
@@ -89,60 +79,209 @@ export async function GET(
     const news = await getCompanyNews(symbol, monthAgo, today);
 
     const metric = financials?.metric || {};
-    const price = quote?.c || mockBase?.price || 100;
+    const price = (quote?.c > 0 ? quote.c : null) ?? mockBase?.price ?? 100;
+
+    // Calculate scores for live tickers not in mock list
+    const rsi = mockBase?.rsi ?? 50;
+    const macd = mockBase?.macd ?? 0;
+    const ema9 = mockBase?.ema9 ?? price;
+    const ema21 = mockBase?.ema21 ?? price;
+    const ema50 = mockBase?.ema50 ?? price * 0.97;
+    const ema200 = mockBase?.ema200 ?? price * 0.90;
+    const vwap = mockBase?.vwap ?? price;
+    const relativeVolume = mockBase?.relativeVolume ?? 1.0;
+    const atr = mockBase?.atr ?? price * 0.03;
+    const pattern = mockBase?.pattern ?? 'Consolidation';
+
+    const revenueGrowth = Number(metric.revenueGrowthQuarterlyYoy) || mockBase?.revenueGrowth || 0;
+    const epsGrowth = Number(metric.epsGrowthQuarterlyYoy) || mockBase?.epsGrowth || 0;
+    const pe = Number(metric.peTTM) || mockBase?.pe || 0;
+    const institutionalOwnership = mockBase?.institutionalOwnership ?? 0;
+    const insiderBuying = mockBase?.insiderBuying ?? 'Neutral';
+    const analystRating = recommendations ? getAnalystLabel(recommendations) : (mockBase?.analystRating ?? 'Hold');
+
+    const technicalScore = mockBase?.technicalScore ?? calcTechnicalScore({
+      rsi, macd, ema9, ema21, ema50, ema200, price, vwap, relativeVolume, atr, pattern,
+    });
+
+    const fundamentalScore = mockBase?.fundamentalScore ?? calcFundamentalScore({
+      revenueGrowth, epsGrowth, pe, institutionalOwnership, insiderBuying, analystRating,
+    });
+
+    const sentimentScore = mockBase?.sentimentScore ?? 55;
+    const optionsFlowScore = mockBase?.optionsFlowScore ?? 50;
+    const institutionalScore = mockBase?.institutionalScore ?? 50;
+    const momentumScore = mockBase?.momentumScore ?? technicalScore;
+
+    const aiScore = mockBase?.aiScore ?? calcFinalAIScore({
+      technicalScore, fundamentalScore, sentimentScore, institutionalScore,
+      relativeStrengthScore: momentumScore,
+      earningsMomentumScore: Math.min(100, Math.max(0, epsGrowth / 2 + 50)),
+      volumeScore: Math.min(100, relativeVolume * 40),
+      optionsFlowScore,
+    });
+
+    const trend = mockBase?.trend ?? getTrend(ema9, ema21, ema50, ema200);
+    const buyProbability = mockBase?.buyProbability ?? calcBuyProbability(aiScore, trend);
+    const priceTarget = mockBase?.priceTarget ?? (price * 1.15);
+
+    const marketCap = profile?.marketCapitalization
+      ? profile.marketCapitalization * 1e6
+      : mockBase?.marketCap ?? 0;
+
+    const high52w = Number(metric['52WeekHigh']) || mockBase?.high52w || price * 1.3;
+    const low52w = Number(metric['52WeekLow']) || mockBase?.low52w || price * 0.7;
+    const volume = quote?.v || mockBase?.volume || 0;
+    const avgVolume = mockBase?.avgVolume || (volume > 0 ? volume : 0);
 
     const detail: StockDetail = {
-      ...(mockBase || ({} as StockDetail)),
       ticker: symbol,
+      company: profile?.name || mockBase?.company || symbol,
       price,
-      change: quote?.d || 0,
-      changePercent: quote?.dp || 0,
-      company: profile?.name || symbol,
+      change: quote?.d ?? 0,
+      changePercent: quote?.dp ?? 0,
+      volume,
+      avgVolume,
+      relativeVolume,
+      marketCap,
+      sector: profile?.finnhubIndustry || mockBase?.sector || 'Unknown',
+      industry: profile?.finnhubIndustry || mockBase?.industry || 'Unknown',
+      aiScore,
+      technicalScore,
+      fundamentalScore,
+      sentimentScore,
+      momentumScore,
+      optionsFlowScore,
+      institutionalScore,
+      buyProbability,
+      pattern,
+      trend,
+      rsi,
+      macd,
+      ema9,
+      ema21,
+      ema50,
+      ema200,
+      vwap,
+      atr,
+      shortFloat: mockBase?.shortFloat ?? 0,
+      beta: Number(metric.beta) || mockBase?.beta || 1,
+      high52w,
+      low52w,
+      pe,
+      eps: Number(metric.epsTTM) || mockBase?.eps || 0,
+      revenueGrowth,
+      epsGrowth,
+      institutionalOwnership,
+      insiderBuying,
+      analystRating,
+      priceTarget,
+      // StockDetail extras
       description: profile?.description || '',
       website: profile?.weburl || '',
       ceo: '',
       employees: profile?.employeeTotal || 0,
-      marketCap: profile?.marketCapitalization ? profile.marketCapitalization * 1e6 : mockBase?.marketCap || 0,
-      sector: profile?.finnhubIndustry || mockBase?.sector || 'Technology',
-      industry: profile?.finnhubIndustry || mockBase?.industry || 'Technology',
-      pe: metric.peTTM || mockBase?.pe || 0,
-      eps: metric.epsTTM || mockBase?.eps || 0,
-      revenueGrowth: metric.revenueGrowthQuarterlyYoy || mockBase?.revenueGrowth || 0,
-      epsGrowth: metric.epsGrowthQuarterlyYoy || mockBase?.epsGrowth || 0,
-      grossMargin: metric.grossMarginTTM || 0,
-      operatingMargin: metric.operatingMarginTTM || 0,
-      netMargin: metric.netMarginTTM || 0,
-      roe: metric.roeTTM || 0,
-      debtToEquity: metric.totalDebt / metric.totalEquity || 0,
-      freeCashFlow: metric.freeCashFlowTTM || 0,
-      forwardPE: metric.peExclExtraTTM || mockBase?.pe || 0,
-      pegRatio: metric.pegNormalizedAnnual || 0,
-      dividendYield: metric.dividendYieldIndicatedAnnual || 0,
-      high52w: metric['52WeekHigh'] || mockBase?.high52w || 0,
-      low52w: metric['52WeekLow'] || mockBase?.low52w || 0,
-      analystRating: recommendations ? getAnalystLabel(recommendations) : mockBase?.analystRating || 'Hold',
-      earningsHistory: earnings,
+      grossMargin: Number(metric.grossMarginTTM) || 0,
+      operatingMargin: Number(metric.operatingMarginTTM) || 0,
+      netMargin: Number(metric.netMarginTTM) || 0,
+      roe: Number(metric.roeTTM) || 0,
+      debtToEquity: (Number(metric.totalDebt) / Number(metric.totalEquity)) || 0,
+      freeCashFlow: Number(metric.freeCashFlowTTM) || 0,
+      forwardPE: Number(metric.peExclExtraTTM) || pe * 0.85,
+      pegRatio: Number(metric.pegNormalizedAnnual) || 0,
+      dividendYield: Number(metric.dividendYieldIndicatedAnnual) || 0,
+      earningsHistory: earnings || [],
       news: news.length > 0 ? news : mockNews,
-      smartMoney: mockSmartMoney,
-      aiExplanation: mockBase?.aiScore
-        ? `${symbol} presents a strong setup with AI score of ${mockBase.aiScore}. ${profile?.description?.slice(0, 200) || ''}`
-        : '',
+      smartMoney: buildSmartMoney(price),
+      aiExplanation: '',
       supportLevels: [price * 0.95, price * 0.90],
       resistanceLevels: [price * 1.05, price * 1.10],
-      candles,
+      candles: generateCandles(price),
     };
 
     return NextResponse.json(detail);
-  } catch {
-    return NextResponse.json({ error: 'Failed to fetch stock data' }, { status: 500 });
+  } catch (err) {
+    console.error(`Stock API error for ${symbol}:`, err);
+    // Return a safe fallback so the page always renders
+    const p = mockBase?.price || 100;
+    const base = mockBase || buildDefaultStock(symbol, p);
+    const detail: StockDetail = {
+      ...base,
+      description: '',
+      website: '',
+      ceo: '',
+      employees: 0,
+      grossMargin: 0,
+      operatingMargin: 0,
+      netMargin: 0,
+      roe: 0,
+      debtToEquity: 0,
+      freeCashFlow: 0,
+      forwardPE: 0,
+      pegRatio: 0,
+      dividendYield: 0,
+      earningsHistory: [],
+      news: mockNews,
+      smartMoney: buildSmartMoney(p),
+      aiExplanation: '',
+      supportLevels: [p * 0.95, p * 0.90],
+      resistanceLevels: [p * 1.05, p * 1.10],
+      candles: generateCandles(p),
+    };
+    return NextResponse.json(detail);
   }
+}
+
+function buildDefaultStock(symbol: string, price: number) {
+  return {
+    ticker: symbol,
+    company: symbol,
+    price,
+    change: 0,
+    changePercent: 0,
+    volume: 0,
+    avgVolume: 0,
+    relativeVolume: 1.0,
+    marketCap: 0,
+    sector: 'Unknown',
+    industry: 'Unknown',
+    aiScore: 50,
+    technicalScore: 50,
+    fundamentalScore: 50,
+    sentimentScore: 50,
+    momentumScore: 50,
+    optionsFlowScore: 50,
+    institutionalScore: 50,
+    buyProbability: 50,
+    pattern: 'Consolidation',
+    trend: 'Neutral' as const,
+    rsi: 50,
+    macd: 0,
+    ema9: price,
+    ema21: price,
+    ema50: price * 0.97,
+    ema200: price * 0.90,
+    vwap: price,
+    atr: price * 0.03,
+    shortFloat: 0,
+    beta: 1,
+    high52w: price * 1.3,
+    low52w: price * 0.7,
+    pe: 0,
+    eps: 0,
+    revenueGrowth: 0,
+    epsGrowth: 0,
+    institutionalOwnership: 0,
+    insiderBuying: 'Neutral' as const,
+    analystRating: 'Hold',
+    priceTarget: price * 1.15,
+  };
 }
 
 function getAnalystLabel(rec: { strongBuy: number; buy: number; hold: number; sell: number; strongSell: number }): string {
   const total = rec.strongBuy + rec.buy + rec.hold + rec.sell + rec.strongSell;
   if (total === 0) return 'Hold';
-  const bullish = rec.strongBuy + rec.buy;
-  const ratio = bullish / total;
+  const ratio = (rec.strongBuy + rec.buy) / total;
   if (ratio >= 0.7) return 'Strong Buy';
   if (ratio >= 0.5) return 'Buy';
   if (ratio >= 0.3) return 'Hold';
