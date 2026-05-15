@@ -29,7 +29,10 @@ export default function DashboardPage() {
   const watchlist = useStore((s) => s.watchlist);
   const isLoading = useStore((s) => s.isLoading);
 
-  const topStocks = [...stocks].sort((a, b) => b.aiScore - a.aiScore).slice(0, 5);
+  const AI_SCORE_THRESHOLD = 70;
+  const topStocks = [...stocks]
+    .sort((a, b) => b.aiScore - a.aiScore)
+    .filter((s) => s.aiScore >= AI_SCORE_THRESHOLD);
   const breakouts = stocks.filter((s) => s.pattern === 'Breakout' || s.changePercent > 4).slice(0, 5);
   const bullishStocks = stocks.filter((s) => s.trend === 'Strong Bullish').length;
   const avgScore = stocks.length > 0
@@ -62,6 +65,7 @@ export default function DashboardPage() {
             <div className="flex items-center gap-2">
               <Zap size={16} className="text-emerald-400" />
               <h2 className="text-sm font-bold text-white">TOP AI RANKED STOCKS</h2>
+              <span className="text-xs text-gray-500">Score ≥ {AI_SCORE_THRESHOLD}</span>
             </div>
             <button onClick={() => router.push('/scanner')} className="text-xs text-emerald-400 hover:text-emerald-300">
               View all →
@@ -72,7 +76,7 @@ export default function DashboardPage() {
               <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
             </div>
           ) : (
-            <div className="divide-y divide-gray-800/50">
+            <div className="divide-y divide-gray-800/50 max-h-96 overflow-y-auto">
               {topStocks.map((stock, idx) => (
                 <div
                   key={stock.ticker}

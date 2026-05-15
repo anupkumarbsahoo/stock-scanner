@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { Stock, MarketOverview, Alert, WatchlistItem, ScannerFilters } from '@/types';
-import { MOCK_MARKET_OVERVIEW, MOCK_ALERTS } from '@/lib/api/mockData';
+import { MOCK_MARKET_OVERVIEW, generateAlertsFromStocks } from '@/lib/api/mockData';
 
 const DEFAULT_FILTERS: ScannerFilters = {
   sectors: [],
@@ -53,7 +53,7 @@ export const useStore = create<AppState>()(
       stocks: [],
       filteredStocks: [],
       marketOverview: MOCK_MARKET_OVERVIEW,
-      alerts: MOCK_ALERTS,
+      alerts: [],
       watchlist: [],
       filters: DEFAULT_FILTERS,
       sortBy: 'aiScore',
@@ -63,7 +63,7 @@ export const useStore = create<AppState>()(
       lastUpdated: 0,
 
       setStocks: (stocks) => {
-        set({ stocks, lastUpdated: Date.now() });
+        set({ stocks, lastUpdated: Date.now(), alerts: generateAlertsFromStocks(stocks) });
         get().applyFiltersAndSort();
       },
 

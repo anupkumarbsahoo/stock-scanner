@@ -4,10 +4,30 @@ import { getQuote, getBasicFinancials } from '@/lib/api/finnhub';
 import { calcTechnicalScore, calcFundamentalScore, calcFinalAIScore, calcBuyProbability, getTrend } from '@/lib/scoring/aiScore';
 import { Stock } from '@/types';
 
-// Ticker list for scanning
+// Ticker list for scanning — diversified across all major sectors
 const SCAN_TICKERS = [
-  'NVDA', 'MU', 'PLTR', 'META', 'SMCI', 'AMD', 'MSFT', 'TSLA', 'GOOGL', 'AVGO',
-  'ORCL', 'CRM', 'INTC', 'QCOM', 'ARM', 'MRVL', 'ON', 'KLAC', 'LRCX', 'AMAT',
+  // Technology / Semiconductors
+  'NVDA', 'MU', 'PLTR', 'META', 'SMCI', 'AMD', 'MSFT', 'GOOGL', 'AVGO', 'ORCL', 'CRM',
+  // Consumer Discretionary
+  'TSLA', 'AMZN', 'HD', 'NKE',
+  // Healthcare
+  'LLY', 'UNH', 'ABBV', 'MRK', 'JNJ',
+  // Financials
+  'JPM', 'V', 'MA', 'GS', 'BLK',
+  // Energy
+  'XOM', 'CVX', 'OXY', 'VST',
+  // Consumer Staples
+  'WMT', 'COST', 'PG',
+  // Industrials
+  'GE', 'CAT', 'RTX', 'DE',
+  // Communication Services
+  'NFLX', 'DIS',
+  // Materials
+  'LIN', 'FCX',
+  // Utilities
+  'NEE',
+  // Real Estate
+  'AMT', 'PLD',
 ];
 
 export async function GET() {
