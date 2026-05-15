@@ -93,7 +93,7 @@ export default function AIExplanationCard({ stock }: AIExplanationCardProps) {
           ) : (
             <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700 text-center">
               <Bot className="mx-auto text-gray-600 mb-2" size={24} />
-              <p className="text-xs text-gray-500">Click &quot;Refresh AI&quot; for Claude-powered analysis</p>
+              <p className="text-xs text-gray-500">Click &quot;Refresh AI&quot; for Gemini-powered analysis</p>
             </div>
           )}
         </div>

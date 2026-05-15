@@ -33,8 +33,8 @@ export default function SettingsPage() {
         </p>
 
         {[
-          { label: 'Finnhub API Key', placeholder: 'c_xxxxxxxxxxxxxxxx', key: 'finnhub', value: finnhubKey, onChange: setFinnhubKey, desc: 'For real-time stock data, quotes, news. Free tier: 60 req/min.' },
-          { label: 'Anthropic (Claude) API Key', placeholder: 'sk-ant-xxxxxxxx', key: 'anthropic', value: anthropicKey, onChange: setAnthropicKey, desc: 'For AI-powered stock analysis and explanations.' },
+          { label: 'Finnhub API Key', placeholder: 'c_xxxxxxxxxxxxxxxx', key: 'finnhub', value: finnhubKey, onChange: setFinnhubKey, desc: 'For real-time stock data, quotes, news, fundamentals. Free tier: 60 req/min.' },
+          { label: 'Google Gemini API Key', placeholder: 'AIzaSy...', key: 'anthropic', value: anthropicKey, onChange: setAnthropicKey, desc: 'For AI-powered stock analysis and explanations. Uses gemini-1.5-flash.' },
         ].map(({ label, placeholder, key, value, onChange, desc }) => (
           <div key={key} className="mb-4">
             <label className="text-xs text-gray-400 block mb-1">{label}</label>
