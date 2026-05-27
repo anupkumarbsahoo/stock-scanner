@@ -15,6 +15,8 @@ const DEFAULT_FILTERS: ScannerFilters = {
   trend: [],
   minPrice: 0,
   maxPrice: Infinity,
+  minWhaleScore: 0,
+  minGrowthScore: 0,
 };
 
 interface AppState {

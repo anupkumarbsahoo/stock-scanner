@@ -40,6 +40,21 @@ export interface Stock {
   insiderBuying: 'Positive' | 'Neutral' | 'Negative';
   analystRating: string;
   priceTarget: number;
+  // Whale Money & Growth Intelligence (computed by scanner)
+  whaleScore?: number;
+  growthScore?: number;
+  accumulationLabel?: 'Whale Accumulation' | 'Stealth Accumulation' | 'Retail Momentum' | 'Distribution Detected' | 'Neutral';
+  growthPrediction?: 'Strong Bullish' | 'Bullish' | 'Neutral' | 'Weak' | 'Avoid';
+  recommendation?: 'Buy Now' | 'Buy on Pullback' | 'Watchlist' | 'Risky Momentum' | 'Avoid';
+  confidencePercent?: number;
+  riskLevel?: 'Low' | 'Medium' | 'High' | 'Very High';
+  entryLow?: number;
+  entryHigh?: number;
+  stopLoss?: number;
+  target1?: number;
+  target2?: number;
+  target3?: number;
+  riskReward?: number;
 }
 
 export interface StockDetail extends Stock {
@@ -155,6 +170,8 @@ export interface ScannerFilters {
   trend: string[];
   minPrice: number;
   maxPrice: number;
+  minWhaleScore: number;
+  minGrowthScore: number;
 }
 
 export interface BacktestResult {

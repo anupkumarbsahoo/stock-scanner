@@ -1,54 +1,47 @@
 import { NextResponse } from 'next/server';
 import { MOCK_STOCKS } from '@/lib/api/mockData';
+import { GENERATED_STOCKS, EXTENDED_TICKERS } from '@/lib/api/stockUniverse';
 import { getQuote, getBasicFinancials } from '@/lib/api/finnhub';
-import { calcTechnicalScore, calcFundamentalScore, calcFinalAIScore, calcBuyProbability, getTrend } from '@/lib/scoring/aiScore';
+import {
+  calcTechnicalScore,
+  calcFundamentalScore,
+  calcFinalAIScore,
+  calcBuyProbability,
+  getTrend,
+  enhanceStockWithWhaleData,
+} from '@/lib/scoring/aiScore';
 import { Stock } from '@/types';
 
-// Ticker list for scanning — diversified across all major sectors
-const SCAN_TICKERS = [
-  // Technology / Semiconductors
-  'NVDA', 'MU', 'PLTR', 'META', 'SMCI', 'AMD', 'MSFT', 'GOOGL', 'AVGO', 'ORCL', 'CRM',
-  // Consumer Discretionary
-  'TSLA', 'AMZN', 'HD', 'NKE',
-  // Healthcare
-  'LLY', 'UNH', 'ABBV', 'MRK', 'JNJ',
-  // Financials
-  'JPM', 'V', 'MA', 'GS', 'BLK',
-  // Energy
-  'XOM', 'CVX', 'OXY', 'VST',
-  // Consumer Staples
-  'WMT', 'COST', 'PG',
-  // Industrials
-  'GE', 'CAT', 'RTX', 'DE',
-  // Communication Services
-  'NFLX', 'DIS',
-  // Materials
-  'LIN', 'FCX',
-  // Utilities
-  'NEE',
-  // Real Estate
-  'AMT', 'PLD',
-];
+// Full ticker universe: 43 hand-crafted + 133 generated = 176+ tickers
+const MOCK_TICKERS = MOCK_STOCKS.map((s) => s.ticker);
+const SCAN_TICKERS = [...MOCK_TICKERS, ...EXTENDED_TICKERS];
+
+// Combined lookup map: prefer hand-crafted data when available
+const ALL_MOCK_STOCKS = [...MOCK_STOCKS, ...GENERATED_STOCKS];
+const MOCK_MAP = new Map<string, Stock>(ALL_MOCK_STOCKS.map((s) => [s.ticker, s]));
 
 export async function GET() {
   const hasFinnhubKey = !!process.env.FINNHUB_API_KEY;
 
   if (!hasFinnhubKey) {
-    // Return mock data with slight randomization to simulate live updates
-    const stocks = MOCK_STOCKS.map((s) => ({
-      ...s,
-      price: parseFloat((s.price * (1 + (Math.random() - 0.5) * 0.002)).toFixed(2)),
-      changePercent: parseFloat((s.changePercent + (Math.random() - 0.5) * 0.1).toFixed(2)),
-      relativeVolume: parseFloat((s.relativeVolume + (Math.random() - 0.5) * 0.05).toFixed(2)),
-    }));
+    // Return all mock stocks with whale enhancement applied
+    const stocks = ALL_MOCK_STOCKS.map((s) => {
+      const randomized = {
+        ...s,
+        price: parseFloat((s.price * (1 + (Math.random() - 0.5) * 0.002)).toFixed(2)),
+        changePercent: parseFloat((s.changePercent + (Math.random() - 0.5) * 0.1).toFixed(2)),
+        relativeVolume: parseFloat((s.relativeVolume + (Math.random() - 0.5) * 0.04).toFixed(2)),
+      };
+      return enhanceStockWithWhaleData(randomized);
+    });
     return NextResponse.json({ stocks, source: 'mock' });
   }
 
   try {
     const stocks: Stock[] = [];
 
-    // Fetch first batch to stay under rate limits
-    for (const ticker of SCAN_TICKERS.slice(0, 10)) {
+    // Live-fetch first 10 original tickers to stay within Finnhub free-tier limits
+    for (const ticker of MOCK_TICKERS.slice(0, 10)) {
       try {
         const [quote, fundamentals] = await Promise.all([
           getQuote(ticker),
@@ -57,7 +50,7 @@ export async function GET() {
 
         if (!quote || !quote.c) continue;
 
-        const mockBase = MOCK_STOCKS.find((s) => s.ticker === ticker);
+        const mockBase = MOCK_MAP.get(ticker);
         const metric = fundamentals?.metric || {};
 
         const technicalScore = calcTechnicalScore({
@@ -102,7 +95,7 @@ export async function GET() {
           mockBase?.ema200 || quote.c
         );
 
-        stocks.push({
+        const liveStock: Stock = {
           ...(mockBase || ({} as Stock)),
           ticker,
           price: quote.c,
@@ -116,23 +109,25 @@ export async function GET() {
           aiScore,
           trend,
           buyProbability: calcBuyProbability(aiScore, trend),
-        });
+        };
+
+        stocks.push(enhanceStockWithWhaleData(liveStock));
       } catch {
-        // Use mock for failed tickers
-        const mockStock = MOCK_STOCKS.find((s) => s.ticker === ticker);
-        if (mockStock) stocks.push(mockStock);
+        const mockStock = MOCK_MAP.get(ticker);
+        if (mockStock) stocks.push(enhanceStockWithWhaleData(mockStock));
       }
     }
 
-    // Add remaining mock stocks
-    for (const mockStock of MOCK_STOCKS) {
-      if (!stocks.find((s) => s.ticker === mockStock.ticker)) {
-        stocks.push(mockStock);
+    // Add remaining stocks from the full universe (all enhanced)
+    for (const stock of ALL_MOCK_STOCKS) {
+      if (!stocks.find((s) => s.ticker === stock.ticker)) {
+        stocks.push(enhanceStockWithWhaleData(stock));
       }
     }
 
     return NextResponse.json({ stocks, source: 'live' });
   } catch {
-    return NextResponse.json({ stocks: MOCK_STOCKS, source: 'mock' });
+    const fallback = ALL_MOCK_STOCKS.map(enhanceStockWithWhaleData);
+    return NextResponse.json({ stocks: fallback, source: 'mock' });
   }
 }

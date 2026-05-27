@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, ScanSearch, Star, TrendingUp, Newspaper,
   BarChart3, Zap, Bell, Briefcase, Settings, Activity, ChevronLeft, ChevronRight,
+  Waves,
 } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { useState } from 'react';
@@ -12,6 +13,7 @@ import { useState } from 'react';
 const NAV_ITEMS = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/scanner', label: 'Market Scanner', icon: ScanSearch },
+  { href: '/whale', label: 'Whale Money', icon: Waves },
   { href: '/watchlist', label: 'Watchlist', icon: Star },
   { href: '/news', label: 'AI News Terminal', icon: Newspaper },
   { href: '/technical', label: 'Technical Analysis', icon: TrendingUp },
