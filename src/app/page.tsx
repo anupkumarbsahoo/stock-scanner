@@ -95,7 +95,7 @@ export default function DashboardPage() {
                     <p className="text-xs text-gray-500 mt-0.5 truncate">{stock.company}</p>
                   </div>
                   <div className="text-right mr-2">
-                    <p className="text-sm font-mono text-white">${stock.price.toFixed(2)}</p>
+                    <p className={`text-sm font-mono ${stock.isLivePrice ? 'text-white' : 'text-orange-400'}`}>${stock.price.toFixed(2)}</p>
                     <p className={`text-xs font-mono ${getChangeColor(stock.changePercent)}`}>
                       {formatPercent(stock.changePercent)}
                     </p>
@@ -159,7 +159,7 @@ export default function DashboardPage() {
                       <span className="text-sm font-bold text-white">{item.ticker}</span>
                       {stock && (
                         <div className="text-right">
-                          <p className="text-xs font-mono text-white">${stock.price.toFixed(2)}</p>
+                          <p className={`text-xs font-mono ${stock.isLivePrice ? 'text-white' : 'text-orange-400'}`}>${stock.price.toFixed(2)}</p>
                           <p className={`text-xs font-mono ${getChangeColor(stock.changePercent)}`}>
                             {formatPercent(stock.changePercent)}
                           </p>

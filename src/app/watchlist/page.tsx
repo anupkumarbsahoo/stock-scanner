@@ -66,7 +66,7 @@ export default function WatchlistPage() {
                         <p className="text-xs text-gray-500 truncate max-w-[120px]">{stock.company}</p>
                       </div>
                     </td>
-                    <td className="px-4 py-3 font-mono text-white">${stock.price.toFixed(2)}</td>
+                    <td className={`px-4 py-3 font-mono ${stock.isLivePrice ? 'text-white' : 'text-orange-400'}`}>${stock.price.toFixed(2)}</td>
                     <td className="px-4 py-3">
                       <span className={`flex items-center gap-0.5 font-mono text-xs ${getChangeColor(stock.changePercent)}`}>
                         {stock.changePercent >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}

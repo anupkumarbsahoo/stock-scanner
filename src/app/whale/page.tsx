@@ -461,8 +461,8 @@ export default function WhalePage() {
                               <div className="text-gray-600 truncate max-w-28">{stock.company}</div>
                             </div>
                           </td>
-                          <td className="px-3 py-2.5 text-right font-mono text-white">
-                            ${stock.price < 10 ? stock.price.toFixed(2) : stock.price.toFixed(2)}
+                          <td className={`px-3 py-2.5 text-right font-mono ${stock.isLivePrice ? 'text-white' : 'text-orange-400'}`}>
+                            ${stock.price.toFixed(2)}
                           </td>
                           <td className={`px-3 py-2.5 text-right font-semibold ${stock.changePercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                             {stock.changePercent >= 0 ? '+' : ''}{stock.changePercent?.toFixed(2)}%

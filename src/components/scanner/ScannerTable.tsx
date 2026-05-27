@@ -125,7 +125,9 @@ export default function ScannerTable() {
                 </td>
 
                 {/* Price */}
-                <td className="px-3 py-2 font-mono text-white">${stock.price.toFixed(2)}</td>
+                <td className={`px-3 py-2 font-mono ${stock.isLivePrice ? 'text-white' : 'text-orange-400'}`}>
+                  ${stock.price.toFixed(2)}
+                </td>
 
                 {/* Change % */}
                 <td className="px-3 py-2">

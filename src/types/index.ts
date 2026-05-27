@@ -40,6 +40,7 @@ export interface Stock {
   insiderBuying: 'Positive' | 'Neutral' | 'Negative';
   analystRating: string;
   priceTarget: number;
+  isLivePrice?: boolean;
   // Whale Money & Growth Intelligence (computed by scanner)
   whaleScore?: number;
   growthScore?: number;

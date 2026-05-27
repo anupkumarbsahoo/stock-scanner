@@ -75,6 +75,7 @@ function applyLivePrice(mock: Stock, meta: ChartMeta): Stock {
 
   return {
     ...mock,
+    isLivePrice: true,
     price,
     change,
     changePercent,
