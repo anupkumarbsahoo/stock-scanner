@@ -18,8 +18,9 @@ const SCAN_TICKERS = [...MOCK_TICKERS, ...EXTENDED_TICKERS];
 const ALL_MOCK_STOCKS = [...MOCK_STOCKS, ...GENERATED_STOCKS];
 const MOCK_MAP = new Map<string, Stock>(ALL_MOCK_STOCKS.map((s) => [s.ticker, s]));
 
+// Windows Chrome UA — avoids some server-side blocks
 const YAHOO_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 interface ChartMeta {
   regularMarketPrice: number;
@@ -31,9 +32,13 @@ interface ChartMeta {
 async function fetchChartMeta(ticker: string): Promise<ChartMeta | null> {
   try {
     const res = await fetch(
-      `https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d&includePrePost=false`,
+      `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d&includePrePost=false`,
       {
-        headers: { 'User-Agent': YAHOO_UA, Accept: 'application/json' },
+        headers: {
+          'User-Agent': YAHOO_UA,
+          'Accept': 'application/json',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
         next: { revalidate: 900 }, // 15-min Vercel Data Cache
       }
     );
@@ -46,16 +51,24 @@ async function fetchChartMeta(ticker: string): Promise<ChartMeta | null> {
   }
 }
 
-// Fetch all tickers in parallel chunks so we stay within the function timeout.
+// All chunks start in parallel — total time ≈ one chunk (~1-2 s), not the sum.
+// Sequential awaiting was hitting Vercel Hobby's 10-second function timeout.
 async function fetchAllPrices(tickers: string[]): Promise<Map<string, ChartMeta>> {
   const map = new Map<string, ChartMeta>();
-  const CHUNK = 40;
+  const CHUNK = 30;
 
-  for (let i = 0; i < tickers.length; i += CHUNK) {
-    const chunk = tickers.slice(i, i + CHUNK);
-    const results = await Promise.allSettled(
-      chunk.map(async (ticker) => ({ ticker, meta: await fetchChartMeta(ticker) }))
-    );
+  const chunkResults = await Promise.all(
+    Array.from({ length: Math.ceil(tickers.length / CHUNK) }, (_, i) =>
+      Promise.allSettled(
+        tickers.slice(i * CHUNK, (i + 1) * CHUNK).map(async (ticker) => ({
+          ticker,
+          meta: await fetchChartMeta(ticker),
+        }))
+      )
+    )
+  );
+
+  for (const results of chunkResults) {
     for (const r of results) {
       if (r.status === 'fulfilled' && r.value.meta) {
         map.set(r.value.ticker, r.value.meta);
