@@ -12,122 +12,191 @@ import {
 } from '@/lib/scoring/aiScore';
 import { Stock } from '@/types';
 
-// Full ticker universe: 43 hand-crafted + 133 generated = 176+ tickers
 const MOCK_TICKERS = MOCK_STOCKS.map((s) => s.ticker);
 const SCAN_TICKERS = [...MOCK_TICKERS, ...EXTENDED_TICKERS];
 
-// Combined lookup map: prefer hand-crafted data when available
 const ALL_MOCK_STOCKS = [...MOCK_STOCKS, ...GENERATED_STOCKS];
 const MOCK_MAP = new Map<string, Stock>(ALL_MOCK_STOCKS.map((s) => [s.ticker, s]));
+
+interface YahooQuote {
+  regularMarketPrice: number;
+  regularMarketChange: number;
+  regularMarketChangePercent: number;
+  regularMarketVolume: number;
+  averageDailyVolume3Month: number;
+  marketCap: number;
+  fiftyTwoWeekHigh: number;
+  fiftyTwoWeekLow: number;
+}
+
+// Fetch live prices for up to 175 tickers from Yahoo Finance (free, no key required).
+// Vercel caches the fetch response for 15 minutes via the Data Cache.
+async function fetchYahooPrices(tickers: string[]): Promise<Map<string, YahooQuote>> {
+  const map = new Map<string, YahooQuote>();
+  const BATCH = 100;
+
+  for (let i = 0; i < tickers.length; i += BATCH) {
+    const symbols = tickers.slice(i, i + BATCH).join(',');
+    try {
+      const res = await fetch(
+        `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbols)}&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketVolume,averageDailyVolume3Month,marketCap,fiftyTwoWeekHigh,fiftyTwoWeekLow&lang=en-US&region=US`,
+        {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; stock-scanner/1.0)',
+            Accept: 'application/json',
+          },
+          next: { revalidate: 900 }, // 15-minute Vercel Data Cache
+        }
+      );
+      if (!res.ok) break;
+      const json = await res.json();
+      for (const q of json?.quoteResponse?.result ?? []) {
+        if (q.regularMarketPrice) map.set(q.symbol, q as YahooQuote);
+      }
+    } catch {
+      break;
+    }
+  }
+
+  return map;
+}
+
+// Merge a live Yahoo price into a mock stock, scaling EMAs/ATR proportionally.
+function applyLivePrice(mock: Stock, live: YahooQuote): Stock {
+  const price = live.regularMarketPrice;
+  const ratio = price / mock.price; // scale derived technicals proportionally
+
+  return {
+    ...mock,
+    price,
+    change: parseFloat(live.regularMarketChange.toFixed(2)),
+    changePercent: parseFloat(live.regularMarketChangePercent.toFixed(2)),
+    volume: live.regularMarketVolume || mock.volume,
+    avgVolume: live.averageDailyVolume3Month || mock.avgVolume,
+    relativeVolume:
+      live.regularMarketVolume && live.averageDailyVolume3Month
+        ? parseFloat((live.regularMarketVolume / live.averageDailyVolume3Month).toFixed(2))
+        : mock.relativeVolume,
+    marketCap: live.marketCap || mock.marketCap,
+    high52w: live.fiftyTwoWeekHigh || mock.high52w,
+    low52w: live.fiftyTwoWeekLow || mock.low52w,
+    // Scale technical levels so their relationship to price stays intact
+    ema9: parseFloat((mock.ema9 * ratio).toFixed(2)),
+    ema21: parseFloat((mock.ema21 * ratio).toFixed(2)),
+    ema50: parseFloat((mock.ema50 * ratio).toFixed(2)),
+    ema200: parseFloat((mock.ema200 * ratio).toFixed(2)),
+    vwap: parseFloat((mock.vwap * ratio).toFixed(2)),
+    atr: parseFloat((mock.atr * ratio).toFixed(2)),
+    priceTarget: parseFloat((mock.priceTarget * ratio).toFixed(2)),
+  };
+}
 
 export async function GET() {
   const hasFinnhubKey = !!process.env.FINNHUB_API_KEY;
 
-  if (!hasFinnhubKey) {
-    // Return all mock stocks with whale enhancement applied
-    const stocks = ALL_MOCK_STOCKS.map((s) => {
-      const randomized = {
-        ...s,
-        price: parseFloat((s.price * (1 + (Math.random() - 0.5) * 0.002)).toFixed(2)),
-        changePercent: parseFloat((s.changePercent + (Math.random() - 0.5) * 0.1).toFixed(2)),
-        relativeVolume: parseFloat((s.relativeVolume + (Math.random() - 0.5) * 0.04).toFixed(2)),
-      };
-      return enhanceStockWithWhaleData(randomized);
-    });
-    return NextResponse.json({ stocks, source: 'mock' });
+  // ── 1. Fetch live prices from Yahoo Finance for the full universe ─────────
+  const livePrices = await fetchYahooPrices(SCAN_TICKERS);
+  const hasLivePrices = livePrices.size > 0;
+
+  // ── 2. Build base stocks: Yahoo live prices layered over mock data ────────
+  const baseStocks: Stock[] = ALL_MOCK_STOCKS.map((mock) => {
+    const live = livePrices.get(mock.ticker);
+    return live ? applyLivePrice(mock, live) : mock;
+  });
+
+  // ── 3. If Finnhub key present, upgrade fundamentals for top 10 tickers ───
+  if (hasFinnhubKey) {
+    try {
+      const liveStocks: Map<string, Stock> = new Map();
+
+      for (const ticker of MOCK_TICKERS.slice(0, 10)) {
+        try {
+          const [quote, fundamentals] = await Promise.all([
+            getQuote(ticker),
+            getBasicFinancials(ticker),
+          ]);
+
+          if (!quote?.c) continue;
+
+          const mockBase = MOCK_MAP.get(ticker)!;
+          const metric = fundamentals?.metric || {};
+
+          const technicalScore = calcTechnicalScore({
+            rsi: mockBase.rsi || 50,
+            macd: mockBase.macd || 0,
+            ema9: mockBase.ema9 || quote.c,
+            ema21: mockBase.ema21 || quote.c,
+            ema50: mockBase.ema50 || quote.c,
+            ema200: mockBase.ema200 || quote.c,
+            price: quote.c,
+            vwap: mockBase.vwap || quote.c,
+            relativeVolume: mockBase.relativeVolume || 1,
+            atr: mockBase.atr || 0,
+            pattern: mockBase.pattern || 'Consolidation',
+          });
+
+          const fundamentalScore = calcFundamentalScore({
+            revenueGrowth: metric.revenueGrowthQuarterlyYoy || mockBase.revenueGrowth || 0,
+            epsGrowth: metric.epsGrowthQuarterlyYoy || mockBase.epsGrowth || 0,
+            pe: metric.peTTM || mockBase.pe || 0,
+            institutionalOwnership: mockBase.institutionalOwnership || 0,
+            insiderBuying: mockBase.insiderBuying || 'Neutral',
+            analystRating: mockBase.analystRating || 'Hold',
+          });
+
+          const aiScore = calcFinalAIScore({
+            technicalScore,
+            fundamentalScore,
+            sentimentScore: mockBase.sentimentScore || 60,
+            institutionalScore: mockBase.institutionalScore || 60,
+            relativeStrengthScore: mockBase.momentumScore || 60,
+            earningsMomentumScore: Math.min(100, (mockBase.epsGrowth || 0) / 2 + 50),
+            volumeScore: Math.min(100, (mockBase.relativeVolume || 1) * 40),
+            optionsFlowScore: mockBase.optionsFlowScore || 60,
+          });
+
+          liveStocks.set(ticker, {
+            ...mockBase,
+            ticker,
+            price: quote.c,
+            change: quote.d || 0,
+            changePercent: quote.dp || 0,
+            high52w: quote['52WeekHigh'] || mockBase.high52w || 0,
+            low52w: quote['52WeekLow'] || mockBase.low52w || 0,
+            technicalScore,
+            fundamentalScore,
+            sentimentScore: mockBase.sentimentScore || 60,
+            aiScore,
+            trend: getTrend(
+              mockBase.ema9 || quote.c,
+              mockBase.ema21 || quote.c,
+              mockBase.ema50 || quote.c,
+              mockBase.ema200 || quote.c
+            ),
+            buyProbability: calcBuyProbability(aiScore, getTrend(
+              mockBase.ema9 || quote.c,
+              mockBase.ema21 || quote.c,
+              mockBase.ema50 || quote.c,
+              mockBase.ema200 || quote.c
+            )),
+          });
+        } catch {
+          // keep Yahoo/mock data for this ticker
+        }
+      }
+
+      const stocks = baseStocks.map((s) => {
+        const finnhubStock = liveStocks.get(s.ticker);
+        return enhanceStockWithWhaleData(finnhubStock || s);
+      });
+
+      return NextResponse.json({ stocks, source: hasLivePrices ? 'live' : 'mock' });
+    } catch {
+      // fall through to Yahoo-only path
+    }
   }
 
-  try {
-    const stocks: Stock[] = [];
-
-    // Live-fetch first 10 original tickers to stay within Finnhub free-tier limits
-    for (const ticker of MOCK_TICKERS.slice(0, 10)) {
-      try {
-        const [quote, fundamentals] = await Promise.all([
-          getQuote(ticker),
-          getBasicFinancials(ticker),
-        ]);
-
-        if (!quote || !quote.c) continue;
-
-        const mockBase = MOCK_MAP.get(ticker);
-        const metric = fundamentals?.metric || {};
-
-        const technicalScore = calcTechnicalScore({
-          rsi: mockBase?.rsi || 50,
-          macd: mockBase?.macd || 0,
-          ema9: mockBase?.ema9 || quote.c,
-          ema21: mockBase?.ema21 || quote.c,
-          ema50: mockBase?.ema50 || quote.c,
-          ema200: mockBase?.ema200 || quote.c,
-          price: quote.c,
-          vwap: mockBase?.vwap || quote.c,
-          relativeVolume: mockBase?.relativeVolume || 1,
-          atr: mockBase?.atr || 0,
-          pattern: mockBase?.pattern || 'Consolidation',
-        });
-
-        const fundamentalScore = calcFundamentalScore({
-          revenueGrowth: metric.revenueGrowthQuarterlyYoy || mockBase?.revenueGrowth || 0,
-          epsGrowth: metric.epsGrowthQuarterlyYoy || mockBase?.epsGrowth || 0,
-          pe: metric.peTTM || mockBase?.pe || 0,
-          institutionalOwnership: mockBase?.institutionalOwnership || 0,
-          insiderBuying: mockBase?.insiderBuying || 'Neutral',
-          analystRating: mockBase?.analystRating || 'Hold',
-        });
-
-        const sentimentScore = mockBase?.sentimentScore || 60;
-        const aiScore = calcFinalAIScore({
-          technicalScore,
-          fundamentalScore,
-          sentimentScore,
-          institutionalScore: mockBase?.institutionalScore || 60,
-          relativeStrengthScore: mockBase?.momentumScore || 60,
-          earningsMomentumScore: Math.min(100, (mockBase?.epsGrowth || 0) / 2 + 50),
-          volumeScore: mockBase?.relativeVolume ? Math.min(100, mockBase.relativeVolume * 40) : 50,
-          optionsFlowScore: mockBase?.optionsFlowScore || 60,
-        });
-
-        const trend = getTrend(
-          mockBase?.ema9 || quote.c,
-          mockBase?.ema21 || quote.c,
-          mockBase?.ema50 || quote.c,
-          mockBase?.ema200 || quote.c
-        );
-
-        const liveStock: Stock = {
-          ...(mockBase || ({} as Stock)),
-          ticker,
-          price: quote.c,
-          change: quote.d || 0,
-          changePercent: quote.dp || 0,
-          high52w: quote['52WeekHigh'] || mockBase?.high52w || 0,
-          low52w: quote['52WeekLow'] || mockBase?.low52w || 0,
-          technicalScore,
-          fundamentalScore,
-          sentimentScore,
-          aiScore,
-          trend,
-          buyProbability: calcBuyProbability(aiScore, trend),
-        };
-
-        stocks.push(enhanceStockWithWhaleData(liveStock));
-      } catch {
-        const mockStock = MOCK_MAP.get(ticker);
-        if (mockStock) stocks.push(enhanceStockWithWhaleData(mockStock));
-      }
-    }
-
-    // Add remaining stocks from the full universe (all enhanced)
-    for (const stock of ALL_MOCK_STOCKS) {
-      if (!stocks.find((s) => s.ticker === stock.ticker)) {
-        stocks.push(enhanceStockWithWhaleData(stock));
-      }
-    }
-
-    return NextResponse.json({ stocks, source: 'live' });
-  } catch {
-    const fallback = ALL_MOCK_STOCKS.map(enhanceStockWithWhaleData);
-    return NextResponse.json({ stocks: fallback, source: 'mock' });
-  }
+  // ── 4. No Finnhub key — use Yahoo prices over mock data ──────────────────
+  const stocks = baseStocks.map((s) => enhanceStockWithWhaleData(s));
+  return NextResponse.json({ stocks, source: hasLivePrices ? 'live' : 'mock' });
 }
