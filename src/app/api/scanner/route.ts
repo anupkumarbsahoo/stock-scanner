@@ -18,8 +18,7 @@ const SCAN_TICKERS = [...MOCK_TICKERS, ...EXTENDED_TICKERS];
 const ALL_MOCK_STOCKS = [...MOCK_STOCKS, ...GENERATED_STOCKS];
 const MOCK_MAP = new Map<string, Stock>(ALL_MOCK_STOCKS.map((s) => [s.ticker, s]));
 
-// Windows Chrome UA — avoids some server-side blocks
-const YAHOO_UA =
+const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 interface ChartMeta {
@@ -28,18 +27,91 @@ interface ChartMeta {
   regularMarketVolume: number;
 }
 
-// Yahoo Finance v8/chart works without authentication — cached 15 min on Vercel.
+// ── Yahoo Finance cookie + crumb ──────────────────────────────────────────────
+// v7/finance/quote (batch) requires a crumb. We obtain it by hitting the
+// GDPR consent endpoint (fc.yahoo.com) to set the session cookie, then
+// exchanging that cookie for a one-time crumb string.
+
+async function getYFSession(): Promise<{ cookie: string; crumb: string } | null> {
+  try {
+    const fcRes = await fetch('https://fc.yahoo.com', {
+      headers: { 'User-Agent': UA, Accept: '*/*' },
+      cache: 'no-store',
+    });
+
+    // getSetCookie() returns each Set-Cookie header as a separate string (Node 20+)
+    const setCookies: string[] =
+      typeof (fcRes.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie === 'function'
+        ? (fcRes.headers as unknown as { getSetCookie: () => string[] }).getSetCookie()
+        : (fcRes.headers.get('set-cookie') ?? '').split(/,(?=[A-Za-z_-]+=)/);
+
+    const cookie = setCookies
+      .map((c) => c.split(';')[0].trim())
+      .filter(Boolean)
+      .join('; ');
+
+    if (!cookie) return null;
+
+    const crumbRes = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', {
+      headers: { 'User-Agent': UA, Cookie: cookie },
+      cache: 'no-store',
+    });
+    if (!crumbRes.ok) return null;
+
+    const crumb = (await crumbRes.text()).trim();
+    return crumb && !crumb.startsWith('<') && !crumb.startsWith('{') ? { cookie, crumb } : null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Batch fetch via v7/quote (4 requests for 175 tickers) ────────────────────
+async function fetchWithSession(
+  tickers: string[],
+  session: { cookie: string; crumb: string }
+): Promise<Map<string, ChartMeta>> {
+  const map = new Map<string, ChartMeta>();
+  const BATCH = 50;
+
+  const responses = await Promise.all(
+    Array.from({ length: Math.ceil(tickers.length / BATCH) }, (_, i) => {
+      const syms = tickers.slice(i * BATCH, (i + 1) * BATCH).join(',');
+      return fetch(
+        `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${syms}&crumb=${encodeURIComponent(session.crumb)}`,
+        {
+          headers: { 'User-Agent': UA, Cookie: session.cookie, Accept: 'application/json' },
+          next: { revalidate: 900 },
+        }
+      ).catch(() => null);
+    })
+  );
+
+  for (const res of responses) {
+    if (!res?.ok) continue;
+    const json: unknown = await res.json().catch(() => null);
+    const quotes = (json as { quoteResponse?: { result?: unknown[] } })?.quoteResponse?.result ?? [];
+    for (const q of quotes as Record<string, number>[]) {
+      if (q.regularMarketPrice) {
+        map.set(q.symbol as unknown as string, {
+          regularMarketPrice: q.regularMarketPrice,
+          chartPreviousClose: q.regularMarketPreviousClose ?? q.regularMarketPrice,
+          regularMarketVolume: q.regularMarketVolume ?? 0,
+        });
+      }
+    }
+  }
+
+  return map;
+}
+
+// ── Per-ticker v8/chart fallback (no auth, parallel chunks) ──────────────────
 async function fetchChartMeta(ticker: string): Promise<ChartMeta | null> {
   try {
     const res = await fetch(
       `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d&includePrePost=false`,
       {
-        headers: {
-          'User-Agent': YAHOO_UA,
-          'Accept': 'application/json',
-          'Accept-Language': 'en-US,en;q=0.9',
-        },
-        next: { revalidate: 900 }, // 15-min Vercel Data Cache
+        headers: { 'User-Agent': UA, Accept: 'application/json', 'Accept-Language': 'en-US,en;q=0.9' },
+        next: { revalidate: 900 },
       }
     );
     if (!res.ok) return null;
@@ -51,9 +123,7 @@ async function fetchChartMeta(ticker: string): Promise<ChartMeta | null> {
   }
 }
 
-// All chunks start in parallel — total time ≈ one chunk (~1-2 s), not the sum.
-// Sequential awaiting was hitting Vercel Hobby's 10-second function timeout.
-async function fetchAllPrices(tickers: string[]): Promise<Map<string, ChartMeta>> {
+async function fetchAllFallback(tickers: string[]): Promise<Map<string, ChartMeta>> {
   const map = new Map<string, ChartMeta>();
   const CHUNK = 30;
 
@@ -75,11 +145,20 @@ async function fetchAllPrices(tickers: string[]): Promise<Map<string, ChartMeta>
       }
     }
   }
-
   return map;
 }
 
-// Overlay live price onto mock stock, scaling EMAs/ATR proportionally.
+// Primary: crumb-based batch (4 requests). Fallback: per-ticker chart API.
+async function fetchLivePrices(tickers: string[]): Promise<Map<string, ChartMeta>> {
+  const session = await getYFSession();
+  if (session) {
+    const prices = await fetchWithSession(tickers, session);
+    if (prices.size > 0) return prices;
+  }
+  return fetchAllFallback(tickers);
+}
+
+// ── Price overlay ─────────────────────────────────────────────────────────────
 function applyLivePrice(mock: Stock, meta: ChartMeta): Stock {
   const price = meta.regularMarketPrice;
   const change = parseFloat((price - meta.chartPreviousClose).toFixed(2));
@@ -97,7 +176,6 @@ function applyLivePrice(mock: Stock, meta: ChartMeta): Stock {
     relativeVolume: meta.regularMarketVolume
       ? parseFloat((meta.regularMarketVolume / mock.avgVolume).toFixed(2))
       : mock.relativeVolume,
-    // Scale technical levels so EMA relationships stay intact relative to price
     ema9: parseFloat((mock.ema9 * ratio).toFixed(2)),
     ema21: parseFloat((mock.ema21 * ratio).toFixed(2)),
     ema50: parseFloat((mock.ema50 * ratio).toFixed(2)),
@@ -111,8 +189,8 @@ function applyLivePrice(mock: Stock, meta: ChartMeta): Stock {
 export async function GET() {
   const hasFinnhubKey = !!process.env.FINNHUB_API_KEY;
 
-  // ── 1. Fetch live prices from Yahoo Finance (v8/chart, no auth required) ──
-  const livePrices = await fetchAllPrices(SCAN_TICKERS);
+  // ── 1. Fetch live prices (crumb-batch first, per-ticker fallback) ──────────
+  const livePrices = await fetchLivePrices(SCAN_TICKERS);
   const hasLive = livePrices.size > 0;
 
   // ── 2. Merge live prices into mock stocks ─────────────────────────────────
